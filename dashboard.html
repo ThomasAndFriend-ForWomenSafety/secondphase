@@ -1,109 +1,165 @@
 <!DOCTYPE html>
-
+<html>
 <head>
-
-    <title>
-
-        Recorder v2.2
-
-    </title>
-
-    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css">
-
-    <script src="https://code.jquery.com/jquery-3.2.1.slim.min.js"></script>
-
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.12.9/umd/popper.min.js"></script>
-
-    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/js/bootstrap.min.js"></script>
-
+  <title>Recorder v2.2 with Live Location Sharing & Socket.IO</title>
+  <!-- Bootstrap CSS -->
+  <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css">
+  <!-- Leaflet CSS -->
+  <link 
+    rel="stylesheet" 
+    href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" 
+    integrity="sha256-sA+9R2+YHk6+8g3IP5S1oPkOfGf4P8jk2bTmAOL9acI=" 
+    crossorigin=""
+  />
+  <script src="https://code.jquery.com/jquery-3.2.1.slim.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.12.9/umd/popper.min.js"></script>
+  <script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/js/bootstrap.min.js"></script>
+  <style>
+    /* Map container styling */
+    #map {
+      height: 300px;
+      width: 100%;
+      margin-bottom: 20px;
+      z-index: -1;
+    }
+  </style>
 </head>
 
-
-
 <body>
+  <div class="container mt-3">
+    <!-- Header for the live tracker -->
+    <h2>Live Location Tracker</h2>
+    <!-- Map container for live location -->
+    <div id="map"></div>
+    <!-- Coordinates display -->
+    <p id="coordinates">Coordinates: Not available</p>
 
-    <div class="container mt-3">
-
-    <span><a id="download" style="display: none;"><button type="button" class="btn btn-primary mb-4"> Download</button></a></span>
-
+    <span>
+      <a id="download" style="display: none;">
+        <button type="button" class="btn btn-primary mb-4">Download</button>
+      </a>
+    </span>
     <button type="button" class="btn btn-danger" id="stop" disabled>Stop</button>
-
     <button type="button" onclick="recordAudio()" class="btn btn-info">Record Audio</button>
-
     <button type="button" onclick="recordVideo()" class="btn btn-info">Record Video</button>
-
     <button type="button" onclick="recordScreen()" class="btn btn-info">Record Screen</button>
-
     <div class="p-5">
-
-        <video autoplay height='480' width="640" muted></video>
-
+      <video autoplay height="480" width="640" muted></video>
     </div>
+  </div>
 
-    </div>
+  <!-- Load Socket.IO client library -->
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    // Initialize the Socket.IO client
+    const socket = io();
+  </script>
 
-</body>
+  <!-- Load Leaflet JS -->
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 
-<script>
 
-  let shouldStop = false;
-let stopped = false;
-const videoElement = document.getElementsByTagName("video")[0];
-const downloadLink = document.getElementById('download');
-const stopButton = document.getElementById('stop');
+  <script>
+    // Variables for map, marker, and circle
+    let map, marker, circle;
 
-const triggerWords = ["help", "danger", "stop", "save me", "emergency"];
-
-const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
-recognition.continuous = true;
-recognition.interimResults = false;
-recognition.lang = 'en-US';
-
-recognition.onresult = (event) => {
-    const transcript = event.results[event.results.length - 1][0].transcript.toLowerCase();
-    console.log("Detected Speech:", transcript);
-    
-    if (triggerWords.some(word => transcript.includes(word))) {
-        console.log("Trigger word detected! Starting recording...");
-        recordAudio();
+    // Initialize or update the map and update the coordinate display
+    function initMap(lat, lng, accuracy) {
+      if (!map) {
+        map = L.map('map').setView([lat, lng], 15);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+        marker = L.marker([lat, lng]).addTo(map)
+          .bindPopup('Your current location').openPopup();
+        circle = L.circle([lat, lng], { radius: accuracy }).addTo(map);
+      } else {
+        marker.setLatLng([lat, lng]);
+        circle.setLatLng([lat, lng]).setRadius(accuracy);
+        map.setView([lat, lng]);
+      }
+      // Update coordinates display with fixed decimals for clarity
+      document.getElementById('coordinates').innerText =
+        `Coordinates: Latitude ${lat.toFixed(6)}, Longitude ${lng.toFixed(6)}`;
     }
-};
 
-recognition.start();
+    // Update location continuously
+    function updateLocation(position) {
+      const lat = position.coords.latitude;
+      const lng = position.coords.longitude;
+      const accuracy = position.coords.accuracy;
+      initMap(lat, lng, accuracy);
 
-function startRecord() {
-    $('.btn-info').prop('disabled', true);
-    $('#stop').prop('disabled', false);
-    $('#download').css('display', 'none');
+      // Store location and share via Socket.IO
+      localStorage.setItem("userLocation", JSON.stringify({ lat, lng, timestamp: Date.now() }));
+      socket.emit('location', { lat, lng, timestamp: Date.now() });
+      console.log("Location Updated:", lat, lng, "Accuracy:", accuracy);
+    }
+
+    function errorHandler(error) {
+      console.error("Error obtaining location", error);
+    }
+
+    if (navigator.geolocation) {
+      navigator.geolocation.watchPosition(updateLocation, errorHandler, {
+        enableHighAccuracy: true,
+        maximumAge: 0
+      });
+    } else {
+      alert("Geolocation is not supported by your browser");
+    }
+
+    // Recording and MediaRecorder related code remains the same
+    let shouldStop = false;
+    let stopped = false;
+    const videoElement = document.getElementsByTagName("video")[0];
+    const downloadLink = document.getElementById('download');
+    const stopButton = document.getElementById('stop');
+
+    // Disable recording buttons and start location sharing during recording
+    function startRecord() {
+      $('.btn-info').prop('disabled', true);
+      $('#stop').prop('disabled', false);
+      $('#download').css('display', 'none');
+      // Optionally force an immediate location update:
+      // navigator.geolocation.getCurrentPosition(updateLocation, errorHandler);
+    }
+
+    // Re-enable recording buttons when recording stops
+    function stopRecord() {
+      $('.btn-info').prop('disabled', false);
+      $('#stop').prop('disabled', true);
+      $('#download').css('display', 'block');
+    }
+
+    function errorHandler(error) {
+  console.error("Error obtaining location", error);
+  alert(`Error (${error.code}): ${error.message}`);
 }
 
-function stopRecord() {
-    $('.btn-info').prop('disabled', false);
-    $('#stop').prop('disabled', true);
-    $('#download').css('display', 'block');
-}
 
-stopButton.addEventListener('click', function () {
-    shouldStop = true;
-});
+    stopButton.addEventListener('click', function () {
+      shouldStop = true;
+    });
 
-const handleRecord = function ({stream, mimeType}) {
-    startRecord();
-    let recordedChunks = [];
-    stopped = false;
-    const mediaRecorder = new MediaRecorder(stream);
+    // Handler for recording via MediaRecorder
+    const handleRecord = function ({ stream, mimeType }) {
+      startRecord();
+      let recordedChunks = [];
+      stopped = false;
+      const mediaRecorder = new MediaRecorder(stream);
 
-    mediaRecorder.ondataavailable = function (e) {
+      mediaRecorder.ondataavailable = function (e) {
         if (e.data.size > 0) {
-            recordedChunks.push(e.data);
+          recordedChunks.push(e.data);
         }
         if (shouldStop === true && stopped === false) {
-            mediaRecorder.stop();
-            stopped = true;
+          mediaRecorder.stop();
+          stopped = true;
         }
-    };
+      };
 
-    mediaRecorder.onstop = function () {
+      mediaRecorder.onstop = function () {
         const blob = new Blob(recordedChunks, { type: mimeType });
         recordedChunks = [];
         const filename = `safety_recording_${Date.now()}`;
@@ -111,19 +167,52 @@ const handleRecord = function ({stream, mimeType}) {
         downloadLink.download = `${filename}.webm`;
         stopRecord();
         videoElement.srcObject = null;
+        socket.emit('recording', { filename, timestamp: Date.now(), data: blob });
+      };
+
+      mediaRecorder.start(200);
     };
 
-    mediaRecorder.start(200);
-};
+    async function recordAudio() {
+      const mimeType = 'audio/webm';
+      shouldStop = false;
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true } });
+      handleRecord({ stream, mimeType });
+    }
 
-async function recordAudio() {
-    const mimeType = 'audio/webm';
-    shouldStop = false;
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true } });
-    handleRecord({ stream, mimeType });
-}
+    async function recordVideo() {
+      const mimeType = 'video/webm';
+      shouldStop = false;
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      videoElement.srcObject = stream;
+      handleRecord({ stream, mimeType });
+    }
 
+    async function recordScreen() {
+      const mimeType = 'video/webm';
+      shouldStop = false;
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      videoElement.srcObject = stream;
+      handleRecord({ stream, mimeType });
+    }
 
-</script>
+    // Speech recognition for trigger words to start audio recording automatically
+    const triggerWords = ["help", "danger", "stop", "save me", "emergency"];
+    const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.lang = 'en-US';
 
+    recognition.onresult = (event) => {
+      const transcript = event.results[event.results.length - 1][0].transcript.toLowerCase();
+      console.log("Detected Speech:", transcript);
+      if (triggerWords.some(word => transcript.includes(word))) {
+        console.log("Trigger word detected! Starting recording...");
+        recordAudio();
+      }
+    };
+
+    recognition.start();
+  </script>
+</body>
 </html>
